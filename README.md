@@ -103,6 +103,29 @@ python3 test.py --image path/to/equation.png
 
 **Supported formats:** `.png`, `.jpg`, `.jpeg`, `.inkml`
 
+### Web Interface
+
+**Start the web server:**
+```bash
+python3 server.py
+```
+
+**Open browser:** http://localhost:5000
+
+**Features:**
+- Drag-and-drop image upload
+- Real-time equation recognition
+- Live equation preview
+- Display LaTeX, expression, and computed answer
+- Shows model status (ready/loading)
+
+**How it works:**
+1. Flask backend loads trained model on startup
+2. Frontend sends uploaded image to `/api/predict` endpoint
+3. Backend runs inference (CNN encoder → LSTM decoder)
+4. Returns LaTeX equation + expression + computed answer
+5. Frontend displays results with image preview
+
 ## Key Files
 
 ### `equation_solver/mathwriting_loader.py`
