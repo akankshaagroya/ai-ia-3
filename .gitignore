@@ -1,9 +1,18 @@
- Models & datasets
+# Models & datasets (ignore large files/folders)
 models/
-datasets/
 *.pt
 *.h5
 *.pth
+
+# Datasets - ignore raw data folders, keep source code
+datasets/
+!datasets/equations_test_kit/
+!datasets/image_mappings.json
+
+# Node.js
+node_modules/
+npm-debug.log
+package-lock.json
 
 # Python
 __pycache__/
@@ -15,10 +24,19 @@ venv/
 env/
 
 # Test images
-@equations/
 equations/
+
+# Environment
+.env
+.env.local
 
 # OS
 .DS_Store
 *.swp
-EOF
+Thumbs.db
+
+# Temporary files
+task.txt
+*.log
+.vscode/
+.idea/

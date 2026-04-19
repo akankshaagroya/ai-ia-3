@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function checkModelStatus() {
     try {
-        const response = await fetch('/api/status');
+        const response = await fetch('http://localhost:5678/api/status');
         if (response.ok) {
             const data = await response.json();
             if (data.status === 'ready') {
@@ -79,8 +79,8 @@ async function handleImageUpload(file) {
         const formData = new FormData();
         formData.append('image', file);
 
-        // Send to backend
-        const response = await fetch('/api/predict', {
+        // Send to backend (port 5678)
+        const response = await fetch('http://localhost:5678/api/predict', {
             method: 'POST',
             body: formData
         });
