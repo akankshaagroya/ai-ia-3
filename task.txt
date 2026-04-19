@@ -1,0 +1,1 @@
+A calculated numeric answer derived from reading handwritten equations (e.g., 2+2).
