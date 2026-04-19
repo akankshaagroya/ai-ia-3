@@ -1,2 +1,24 @@
+ Models & datasets
+models/
 datasets/
+*.pt
+*.h5
+*.pth
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.Python
 venv/
+env/
+
+# Test images
+@equations/
+equations/
+
+# OS
+.DS_Store
+*.swp
+EOF

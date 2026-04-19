@@ -1,152 +1,136 @@
 #!/usr/bin/env python3
+"""Equation recognition and solver (seq2seq end-to-end model)."""
 import argparse
 import os
 import glob
 import torch
-
-from equation_solver import inference, model, segmentation
-import cv2
 import numpy as np
+from pathlib import Path
 
 
-def print_result(result, confidence_threshold=0.5):
-    """Pretty-print inference result."""
-    print(f"\nImage: {result['image_path']}")
-    print("-" * 60)
+def predict_equation(image_path, model, vocab, idx2token, device='cpu'):
+    """Predict equation from image using seq2seq model."""
+    from equation_solver.mathwriting_loader import decode_sequence, parse_inkml_strokes, strokes_to_image
+    from PIL import Image
 
-    # Print detected symbols with confidence
-    if result['symbols']:
-        symbol_str = " ".join([f"{sym}({conf*100:.1f}%)" for sym, conf in result['symbols']])
-        print(f"Detected symbols: {symbol_str}")
-
-        # Warn on low confidence
-        for sym, conf in result['symbols']:
-            if conf < confidence_threshold:
-                print(f"  ⚠️  Low confidence on '{sym}' ({conf*100:.1f}%)")
-    else:
-        print("Detected symbols: (none)")
-
-    print(f"Equation:  {result['equation']}")
-    print(f"Expression: {result['expression']}")
-
-    # Print result
-    if isinstance(result['result'], str) and result['result'].startswith('ERROR'):
-        print(f"Result:    {result['result']}")
-    else:
-        print(f"Result:    {result['result']}")
-
-    print("-" * 60)
-
-
-def visualize_segmentation(image_path, device, model_path='models/equation_classifier.pt'):
-    """Show image with bounding boxes for each segmented symbol."""
     try:
-        import matplotlib.pyplot as plt
-        import matplotlib.patches as patches
-    except ImportError:
-        print("matplotlib not available for visualization")
-        return
+        if image_path.endswith('.inkml'):
+            strokes, _ = parse_inkml_strokes(image_path)
+            if not strokes:
+                return None
+            img = strokes_to_image(strokes)
+            img_array = np.array(img, dtype=np.float32) / 255.0
+        else:
+            img = Image.open(image_path).convert('L')
+            if img.size != (640, 480):
+                img = img.resize((640, 480), Image.Resampling.LANCZOS)
+            img_array = np.array(img, dtype=np.float32) / 255.0
 
-    img = cv2.imread(image_path)
-    if img is None:
-        print(f"Could not load image: {image_path}")
-        return
+        img_tensor = torch.from_numpy(img_array).unsqueeze(0).unsqueeze(0).to(device)
 
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        with torch.no_grad():
+            generated_indices = model.generate(img_tensor, vocab, max_len=300, device=device)
 
-    # Get segmentation info
-    binary = segmentation.preprocess_image(image_path)
-    bboxes = segmentation.get_bounding_boxes(binary)
+        tokens = decode_sequence(generated_indices[0], idx2token)
+        return ''.join(tokens)
 
-    # Load model and predict
-    clf = model.load_model(model_path, device=device)
-    _, predictions = inference.predict_equation(clf, image_path, device=device)
+    except Exception as e:
+        return None
 
-    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
-    ax.imshow(img_rgb)
 
-    # Draw bounding boxes and labels
-    for (x, y, w, h), (symbol, conf) in zip(bboxes, predictions):
-        rect = patches.Rectangle((x, y), w, h, linewidth=2, edgecolor='lime', facecolor='none')
-        ax.add_patch(rect)
-        label = f"{symbol} ({conf*100:.0f}%)"
-        ax.text(x, y - 5, label, fontsize=10, color='lime', ha='left',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.7))
+def parse_and_evaluate(latex_str):
+    """Convert LaTeX to expression and evaluate."""
+    if not latex_str:
+        return None, None
 
-    ax.set_title(f"Equation Segmentation: {predictions}")
-    plt.tight_layout()
-    plt.show()
+    import re
+    expr = latex_str.replace('\\times', '*')
+    expr = expr.replace('\\cdot', '*')
+    expr = expr.replace('\\div', '/')
+    expr = expr.replace(' ', '')
+    expr = re.sub(r'[^0-9+\-*/.=()]', '', expr)
+
+    if not expr or '=' in expr:
+        return expr, None
+
+    try:
+        result = eval(expr, {"__builtins__": {}}, {})
+        return expr, result
+    except:
+        return expr, None
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Test handwritten equation recognition model')
-    parser.add_argument('--image', help='Path to single test image')
-    parser.add_argument('--dir', help='Directory of test images')
-    parser.add_argument('--model-path', default='models/equation_classifier.pt', help='Path to trained model')
-    parser.add_argument('--visualize', action='store_true', help='Show bounding boxes')
-    parser.add_argument('--confidence-threshold', type=float, default=0.5, help='Warn if symbol confidence < this')
+    parser = argparse.ArgumentParser(description='Equation recognition and solver')
+    parser.add_argument('--image', help='Single image path')
+    parser.add_argument('--dir', default='@equations', help='Equation images directory')
+    parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
+    parser.add_argument('--model', default='models/seq2seq_mathwriting.pt', help='Model path')
 
     args = parser.parse_args()
 
-    # Set device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print("=" * 70)
+    print("Handwritten Equation Recognition & Solver")
+    print("=" * 70)
 
-    # Determine image paths
-    image_paths = []
+    device = torch.device(args.device)
+    print(f"\nDevice: {device}")
 
-    if args.image:
-        image_paths = [args.image]
-    elif args.dir:
-        pattern = os.path.join(args.dir, '**', '*')
-        for ext in ['*.png', '*.jpg', '*.jpeg']:
-            image_paths.extend(glob.glob(os.path.join(args.dir, ext)))
-            image_paths.extend(glob.glob(os.path.join(args.dir, '**', ext), recursive=True))
-        image_paths = list(set(image_paths))  # Remove duplicates
-    else:
-        default_dir = 'datasets/test_equations'
-        pattern = os.path.join(default_dir, '**', '*')
-        for ext in ['*.png', '*.jpg', '*.jpeg']:
-            image_paths.extend(glob.glob(os.path.join(default_dir, ext)))
-            image_paths.extend(glob.glob(os.path.join(default_dir, '**', ext), recursive=True))
-        image_paths = list(set(image_paths))
-
-    if not image_paths:
-        print("=" * 60)
-        print("No images found.")
-        print(f"Add test images to 'datasets/test_equations/' or specify with --image/--dir")
-        print("=" * 60)
+    # Load model
+    if not os.path.exists(args.model):
+        print(f"\nERROR: Model not found at {args.model}")
+        print("Train with: python3 train_mathwriting.py --train-samples 10000")
         return
 
-    print("=" * 60)
-    print("Handwritten Equation Recognition - Inference (PyTorch)")
-    print("=" * 60)
-    print(f"Using device: {device}\n")
-
-    # Load model once
-    try:
-        clf = model.load_model(args.model_path, device=device)
-    except FileNotFoundError as e:
-        print(f"ERROR: {e}")
-        print("Run 'python train.py' first to train the model.")
-        return
+    print(f"Loading model: {args.model}")
+    from equation_solver.seq2seq_model import load_model
+    model, vocab, idx2token = load_model(args.model, device=device)
+    model.eval()
 
     # Process images
-    image_paths.sort()
-    for image_path in image_paths:
-        try:
-            result = inference.run_pipeline(image_path, clf=clf, device=device)
-            print_result(result, confidence_threshold=args.confidence_threshold)
+    if args.image:
+        print(f"\nProcessing: {args.image}\n")
 
-            if args.visualize:
-                visualize_segmentation(image_path, device, args.model_path)
+        latex = predict_equation(args.image, model, vocab, idx2token, device)
+        if latex:
+            print(f"Equation:  {latex}")
+            expr, result = parse_and_evaluate(latex)
+            if expr:
+                print(f"Expression: {expr}")
+            if result is not None:
+                print(f"Answer:    {result}")
+        else:
+            print("Failed to recognize equation")
 
-        except Exception as e:
-            print(f"\nERROR processing {image_path}: {e}")
-            print("-" * 60)
+    else:
+        if not os.path.exists(args.dir):
+            os.makedirs(args.dir, exist_ok=True)
+            print(f"\nCreated {args.dir}/ — add equation images there")
+            return
 
-    print("\n" + "=" * 60)
-    print(f"Processed {len(image_paths)} image(s)")
-    print("=" * 60)
+        images = sorted(glob.glob(os.path.join(args.dir, '*')))
+        images = [f for f in images if f.endswith(('.png', '.jpg', '.jpeg', '.inkml'))]
+
+        if not images:
+            print(f"\nNo images in {args.dir}")
+            return
+
+        print(f"\nProcessing {len(images)} images from {args.dir}...\n")
+
+        for image_path in images:
+            basename = Path(image_path).name
+            print(f"→ {basename}")
+
+            latex = predict_equation(image_path, model, vocab, idx2token, device)
+            if latex:
+                print(f"  Equation:  {latex}")
+                expr, result = parse_and_evaluate(latex)
+                if result is not None:
+                    print(f"  Answer:    {result}")
+            else:
+                print(f"  Failed to recognize")
+
+            print()
 
 
 if __name__ == '__main__':
